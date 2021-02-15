@@ -1,13 +1,13 @@
-FROM python:3
+FROM python:3.8
 
-RUN pip install --upgrade pip && \
-    pip install \
+RUN pip install \
     black \
     lmfit \
     mutmut \
     numpy \
     pandas \
     pytest==5.0.1 \
-    scipy
+    scipy \
+    sklearn
 
 WORKDIR /workdir
