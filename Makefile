@@ -8,7 +8,7 @@ install:
 	pip install --editable .
 
 format:
-	black --check -l 100 HCLcat
+	black -l 100 HCLcat
 
 tests: install
 	pytest --verbose
