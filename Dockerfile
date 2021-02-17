@@ -8,6 +8,10 @@ RUN pip install \
     pandas \
     pytest==5.0.1 \
     scipy \
-    sklearn
+    sklearn \
+    matplotlib \
+    batman-package \
+    h5py \
+    ipykernel
 
 WORKDIR /workdir
