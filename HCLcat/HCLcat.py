@@ -1,11 +1,15 @@
 #!/usr/bin/env python
 
-import numpy as np
 from scipy import interpolate
 from sklearn.decomposition import PCA, TruncatedSVD
+from lmfit import Model
+
+import numpy as np
 import random
 import pandas as pd
+import matplotlib.pyplot as plt
 
+SVD_kwargs = dict(n_components=15, n_iter=7, random_state=45, tol=0)
 
 def remove_outliers(x, std_limit=5):
     size = len(x)
@@ -112,18 +116,18 @@ def generate_exponential_enveloping(fft_freq_array, envelope_level=1):
     return expo
 
 
-def fourierfilter(x, cutfreq, freq=0.05):
+def low_pass_fourier_filter(x, cutfreq, freq=0.05):
     size = len(x)
     fft_freq = np.fft.fftfreq(size, d=freq)
     x_fft = np.fft.fft(x)
     mask = np.abs(fft_freq) > cutfreq
-    x_fft[mask] = 0.1
+    x_fft[mask] = 0
     x_fft = np.fft.ifft(x_fft)
     return x_fft.real
 
 
-def pca_train(data_train):
-    svd = TruncatedSVD(n_components=15, n_iter=7, random_state=45, tol=0)
+def pca_train(data_train, kwargs=SVD_kwargs):
+    svd = TruncatedSVD(**kwargs)
     svd.fit(data_train.T)
     comp = svd.components_
     return comp
@@ -134,11 +138,11 @@ def pca_filter(data_noised, comp):
     return np.matmul(ec_n.T, comp)
 
 
-def medio_trapezoid(x, depth, down, tc):
+def half_trapezoid(x, depth, down, tc):
     y = np.zeros(len(x))
     a = (depth - 1) / (tc)
     y[: int(down)] = depth
-    y[int(down) : int(tc + down)] = -a * (x[int(down) : int(tc + down)] - tc - down) + 1
+    y[int(down):int(tc + down)] = -a * (x[int(down) : int(tc + down)] - tc - down) + 1
     y[int(tc + down) :] = 1
     return y
 
@@ -150,3 +154,73 @@ def medio_trapezoid2(x, depth, down, tc, arriba):
     y[int(down) : int(tc + down)] = -a * (x[int(down) : int(tc + down)] - tc - down) + arriba
     y[int(tc + down) :] = arriba
     return y
+
+def initialize_half_trapezoid_model():
+    tmod = Model(half_trapezoid)
+    tmod.set_param_hint('depth', value=0.9, min=0, max=1)
+    tmod.set_param_hint('down', value=5000, min=0, max=144000)
+    tmod.set_param_hint('tc', value=18000, max=73000)
+    return tmod 
+
+def fit_half_trapezoid_model(data):
+    lenght =len(data)
+    xdata = np.linspace(1,lenght,lenght)
+    model = initialize_half_trapezoid_model()
+    params = model.make_params()
+    result = model.fit(data, params, x=xdata,method='nelder', max_nfev=20000)
+    return result
+
+class TransitLightCurve:
+    def __init__(self, data):
+        self.data = data
+        self.snr = calculate_snr(data)
+        self.lenght = len(data)
+        self.methods = ["fourier","pca","mov"]
+        self.data_filtered = {method : [] for method in self.methods}
+        self.cadence = 0.05 #in seconds
+        self.data_train = None
+        self.pca_comp = None
+        self.trap_fitted = {method : [] for method in self.methods}
+
+
+    def low_pass_filter(self, cutfreq=0.02, plot=True):
+        self.data_filtered['fourier'] = low_pass_fourier_filter(self.data, cutfreq, self.cadence)
+        if plot:
+            plt.plot(self.data_filtered['fourier'])
+    
+    def mov_filter(self, mov=2000, plot=True, med=False):
+        self.data_filtered["mov"] = prom_mov(self.data, mov, med=med)
+        if plot:
+            plt.plot(self.data_filtered['mov'])
+    
+    def PCA_train(self, kwargs=SVD_kwargs):
+        if self.data_train is not None:
+            self.pca_comp = pca_train(self.data_train, kwargs)
+        else:
+            print("You need update the data_train database first, use: TransitLightCurve.update_PCA_data_train")
+
+    def update_PCA_data_train(self, train_matrix):
+        self.data_train = train_matrix
+
+    def PCA_filter(self, plot=True):
+        if self.pca_comp is not None:
+            self.data_filtered["pca"] = pca_filter(self.data, self.pca_comp)
+            if plot:
+                plt.plot(self.data_filtered["pca"])
+        else:
+            print("You need calculate the principal components first, use: TransitLightCurve.PCA_train")   
+
+    def full_analyses(self, plot=True):
+        self.low_pass_filter()
+        self.mov_filter()
+        self.PCA_filter()
+        if plot:
+            plt.plot(self.data)
+        for method in self.trap_fitted.keys():
+            self.trap_fitted[method] = fit_half_trapezoid_model(self.data_filtered[method])
+            if plot:
+                plt.plot(self.trap_fitted[method].best_fit, label=method)
+        plt.legend()
+
+
+    
